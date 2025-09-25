@@ -215,8 +215,14 @@ def webhook():
                     bot.send_message(chat_id, "Я більше не надсилатиму фільми.")
     return jsonify({"status": "success"})
 
+def set_webhook():
+    webhook_url = f"https://telegram-movie-bot-three.vercel.app/webhook"
+    response = requests.post(f"https://api.telegram.org/bot{os.getenv('TELEGRAM_TOKEN')}/setWebhook", data={"url": webhook_url})
+    print(response.json())
+
 # Запуск сервера Flask
 if __name__ == "__main__":
+    set_webhook()  # Налаштовуємо вебхук на Telegram
     scheduler.start()  # Стартуємо планувальник
     app.run(debug=True)
 
