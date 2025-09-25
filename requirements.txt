@@ -1,0 +1,3 @@
+python-dotenv
+requests
+aiogram>=3.0
