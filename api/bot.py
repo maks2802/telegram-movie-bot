@@ -225,4 +225,8 @@ if __name__ == "__main__":
     set_webhook()  # Налаштовуємо вебхук на Telegram
     scheduler.start()  # Стартуємо планувальник
     app.run(debug=True)
+    
+def check_webhook():
+    response = requests.get(f"https://api.telegram.org/bot{os.getenv('TELEGRAM_TOKEN')}/getWebhookInfo")
+    print(response.json())
 
