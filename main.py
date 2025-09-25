@@ -10,7 +10,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime, time
 from dotenv import load_dotenv
 
-# Завантажуємо токени з .env
+# Завантажуємо токени з env
 load_dotenv()
 
 BASE_URL = "https://api.themoviedb.org/3"
