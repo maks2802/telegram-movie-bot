@@ -197,7 +197,7 @@ async def on_bot_added(message: types.Message):
             scheduler.add_job(
                 send_daily_movie,
                 'interval',
-                minutes=1,
+                seconds=5,
                 args=[chat_id]
             )
             await message.answer("🤖 Тепер я кожні 6 годин надсилатиму цікавий фільм!")
