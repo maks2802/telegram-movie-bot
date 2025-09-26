@@ -264,7 +264,7 @@ async def on_bot_added(message: types.Message):
         chat_id = message.chat.id
         if chat_id not in active_chats:
             active_chats[chat_id] = True
-            scheduler.add_job(send_daily_movie, "interval", seconds=10, args=[chat_id])
+            scheduler.add_job(send_daily_movie, "interval", hours=6, args=[chat_id])
             await message.answer("🤖 Я активний! Кожні 6 годин надсилатиму цікавий фільм.")
         else:
             await message.answer("🤖 Я вже працюю у цьому чаті!")
