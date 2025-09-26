@@ -1,5 +1,5 @@
-aiogram==2.15
-requests==2.26.0
-apscheduler==3.7.0
-python-dotenv==0.19.0
-aiohttp
+aiogram==3.13.1
+requests==2.31.0
+apscheduler==3.10.4
+python-dotenv==1.0.1
+aiohttp==3.9.5
