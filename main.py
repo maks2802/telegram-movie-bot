@@ -2,9 +2,8 @@ import asyncio
 import os
 import json
 import random
-import signal
 import sys
-from datetime import datetime, time
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import requests
@@ -23,12 +22,13 @@ DATA_DIR = os.getenv("DATA_DIR", "/data")  # На Railway змонтуй Volume 
 os.makedirs(DATA_DIR, exist_ok=True)
 SENT_IDS_PATH = os.path.join(DATA_DIR, "sent_ids.json")
 
-TZ_NAME = os.getenv("BOT_TZ", "Europe/Kyiv")
-LOCAL_TZ = ZoneInfo(TZ_NAME)
-
 BASE_URL = "https://api.themoviedb.org/3"
 TMDB_TOKEN = os.getenv("TMDB_TOKEN")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+
+# Таймзона
+TZ_NAME = os.getenv("BOT_TZ", "Europe/Kyiv")
+LOCAL_TZ = ZoneInfo(TZ_NAME)
 
 if not TELEGRAM_TOKEN:
     print("ERROR: TELEGRAM_TOKEN не задано в змінних середовища.")
@@ -37,14 +37,25 @@ if not TELEGRAM_TOKEN:
 headers = {"Authorization": f"Bearer {TMDB_TOKEN}"} if TMDB_TOKEN else {}
 
 # ----------------------------
-# Стан
+# Стан (пер-чатова історія)
 # ----------------------------
-sent_movie_ids: list[int] = []
+# Замість глобального списку — мапа: chat_id(str) -> [movie_ids]
+sent_movie_ids: dict[str, list[int]] = {}
 MAX_SENT_IDS = 1000
-current_page = 1  # трекаємо сторінки top_rated
+current_page = 1  # трекаємо сторінки top_rated (загальні для всієї інстанції)
+
+def _chat_key(chat_id: int) -> str:
+    # зберігаємо ключі як рядки, щоб безпроблемно писати у JSON
+    return str(chat_id)
+
+def get_ids_for_chat(chat_id: int) -> list[int]:
+    key = _chat_key(chat_id)
+    if key not in sent_movie_ids:
+        sent_movie_ids[key] = []
+    return sent_movie_ids[key]
 
 def save_sent_ids():
-    """Зберігає список відправлених ID у файл (у Volume)."""
+    """Зберігає мапу chat_id -> [ids] у файл (у Volume)."""
     try:
         with open(SENT_IDS_PATH, "w", encoding="utf-8") as f:
             json.dump(sent_movie_ids, f)
@@ -52,16 +63,22 @@ def save_sent_ids():
         print(f"Помилка збереження sent_ids: {e}")
 
 def load_sent_ids():
-    """Завантажує список відправлених ID з файлу (з Volume)."""
+    """Завантажує мапу chat_id -> [ids] з файлу. Мігрує зі старого формату (list)."""
     if os.path.exists(SENT_IDS_PATH) and os.path.getsize(SENT_IDS_PATH) > 0:
         try:
             with open(SENT_IDS_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+            # Якщо старий формат: був список -> мігруємо в окремий простір
+            if isinstance(data, list):
+                print("Виявлено старий формат історії (list). Виконую міграцію у map per-chat.")
+                return {"__legacy__": data}
+            if isinstance(data, dict):
+                return data
         except json.JSONDecodeError:
-            print("Помилка читання JSON-файлу sent_ids. Створюю новий список.")
+            print("Помилка читання JSON-файлу sent_ids. Створюю новий словник.")
         except Exception as e:
             print(f"Помилка читання sent_ids: {e}")
-    return []
+    return {}
 
 # ----------------------------
 # TMDB helpers
@@ -131,9 +148,7 @@ def fetch_movie_credits(movie_id: int | str):
         return {}
 
 def extract_director(credits: dict) -> str:
-    """Повертає ім'я режисера з credits.crew."""
     crew = credits.get("crew", []) or []
-    # Пошук job == Director
     for person in crew:
         if (person.get("job") == "Director") or (
             person.get("known_for_department") == "Directing" and person.get("job") in {"Director", "Co-Director"}
@@ -141,9 +156,12 @@ def extract_director(credits: dict) -> str:
             return person.get("name") or "Невідомий режисер"
     return "Невідомий режисер"
 
-def fetch_random_movie():
-    """Ітеруємося по /movie/top_rated сторінково, щоб завжди було що надсилати."""
-    global sent_movie_ids, current_page
+# ----------------------------
+# Логіка вибору фільму (пер-чатова історія)
+# ----------------------------
+def fetch_random_movie(chat_id: int):
+    """Ітеруємося по /movie/top_rated сторінково. Уникнення повторів — лише в рамках цього chat_id."""
+    global current_page
 
     endpoint = "top_rated"
     try:
@@ -160,25 +178,28 @@ def fetch_random_movie():
         movies = []
 
     if not movies:
-        print(f"Порожня сторінка {current_page}. Скидаю пам'ять, починаю з 1.")
-        sent_movie_ids = []
+        print(f"Порожня сторінка {current_page}. Починаю з 1.")
         current_page = 1
-        return fetch_random_movie()
+        return fetch_random_movie(chat_id)
 
-    available = [m for m in movies if m.get("id") not in sent_movie_ids]
+    chat_ids = get_ids_for_chat(chat_id)
+    available = [m for m in movies if m.get("id") not in chat_ids]
+
     if not available:
-        print(f"Усі фільми сторінки {current_page} вже були. Перехід до {current_page + 1}.")
+        print(f"Усі фільми сторінки {current_page} вже були в чаті {chat_id}. Перехід до {current_page + 1}.")
         current_page += 1
-        return fetch_random_movie()
+        return fetch_random_movie(chat_id)
 
     movie = random.choice(available)
-    sent_movie_ids.append(movie["id"])
-    if len(sent_movie_ids) > MAX_SENT_IDS:
-        sent_movie_ids.pop(0)
+    chat_ids.append(movie["id"])
+    if len(chat_ids) > MAX_SENT_IDS:
+        chat_ids.pop(0)
 
     if movie.get("poster_path"):
         movie["poster_url"] = f"https://image.tmdb.org/t/p/w500{movie['poster_path']}"
 
+    # Зберігаємо оновлення саме для цього чату
+    sent_movie_ids[_chat_key(chat_id)] = chat_ids
     return movie
 
 # ----------------------------
@@ -201,7 +222,7 @@ async def send_daily_movie(chat_id: int):
         else:  # 23:00 - 5:59
             greeting = "Навіщо спати?😴 Краще подивись:"
 
-        movie = fetch_random_movie()
+        movie = fetch_random_movie(chat_id)
         if not movie:
             await bot.send_message(chat_id=chat_id, text="Схоже, TMDB недоступний. Спробую пізніше.")
             return
@@ -231,9 +252,9 @@ async def send_daily_movie(chat_id: int):
         else:
             await bot.send_message(chat_id=chat_id, text=caption, parse_mode="Markdown")
 
-        print(f"Відправлено: '{movie.get('title')}', ID збережено.")
+        print(f"[{chat_id}] Відправлено: '{movie.get('title')}'.")
     except Exception as e:
-        print(f"Помилка відправки фільму: {e}")
+        print(f"[{chat_id}] Помилка відправки фільму: {e}")
     finally:
         save_sent_ids()
 
@@ -243,18 +264,17 @@ async def on_bot_added(message: types.Message):
         chat_id = message.chat.id
         if chat_id not in active_chats:
             active_chats[chat_id] = True
-            # Кожні 6 годин
-            scheduler.add_job(send_daily_movie, "interval", hours=6, args=[chat_id])
-            await message.answer("🤖 Я активний! Кожні 6 годин надсилатиму цікавий фільм")
+            scheduler.add_job(send_daily_movie, "interval", seconds=10, args=[chat_id])
+            await message.answer("🤖 Я активний! Кожні 6 годин надсилатиму цікавий фільм.")
         else:
             await message.answer("🤖 Я вже працюю у цьому чаті!")
 
 @dp.message(Command("reset"))
 async def reset_ids(message: types.Message):
-    global sent_movie_ids
-    sent_movie_ids = []
+    chat_id = message.chat.id
+    sent_movie_ids[_chat_key(chat_id)] = []
     save_sent_ids()
-    await message.answer("✅ Історію відправлених фільмів очищено.")
+    await message.answer("✅ Історію цього чату очищено.")
 
 @dp.message(Command("trending"))
 async def send_trending(message: types.Message):
@@ -332,10 +352,10 @@ async def on_startup():
     scheduler.start()
     global sent_movie_ids
     sent_movie_ids = load_sent_ids()
-    if sent_movie_ids:
-        print(f"Завантажено {len(sent_movie_ids)} ID фільмів зі сховища.")
-    else:
-        print("Сховище ID порожнє або відсутнє. Починаю з чистого списку.")
+    # Якщо є міграційний __legacy__, просто збережемо його як «глобальну» історію для сумісності
+    if isinstance(sent_movie_ids, dict) and "__legacy__" in sent_movie_ids:
+        print(f"Міграція завершена. Старих ID: {len(sent_movie_ids['__legacy__'])}. Використовуються лише пер-чатові списки надалі.")
+    print(f"Історій чатів завантажено: {len(sent_movie_ids)}")
 
 async def on_shutdown():
     try:
@@ -356,5 +376,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        # Акуратна зупинка на Windows при Ctrl+C
         print("Завершення за запитом користувача (KeyboardInterrupt).")
