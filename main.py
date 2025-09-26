@@ -5,6 +5,7 @@ import random
 import signal
 import sys
 from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
@@ -21,6 +22,9 @@ load_dotenv()
 DATA_DIR = os.getenv("DATA_DIR", "/data")  # На Railway змонтуй Volume у /data
 os.makedirs(DATA_DIR, exist_ok=True)
 SENT_IDS_PATH = os.path.join(DATA_DIR, "sent_ids.json")
+
+TZ_NAME = os.getenv("BOT_TZ", "Europe/Kyiv")
+LOCAL_TZ = ZoneInfo(TZ_NAME)
 
 BASE_URL = "https://api.themoviedb.org/3"
 TMDB_TOKEN = os.getenv("TMDB_TOKEN")
@@ -182,12 +186,12 @@ def fetch_random_movie():
 # ----------------------------
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(timezone=LOCAL_TZ)
 active_chats: dict[int, bool] = {}
 
 async def send_daily_movie(chat_id: int):
     try:
-        current_hour = datetime.now().hour
+        current_hour = datetime.now(LOCAL_TZ).hour
         if 6 <= current_hour <= 11:
             greeting = "Раночку!🤗 Щоб прокинутись подивись:"
         elif 12 <= current_hour <= 16:
