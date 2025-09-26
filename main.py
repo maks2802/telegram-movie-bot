@@ -269,9 +269,9 @@ async def movie_details(message: types.Message):
 async def on_startup():
     scheduler.start()
 
-async def main():
-    await on_startup()
+async def on_startup_and_polling():
+    scheduler.start() # on_startup
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(on_startup_and_polling())
