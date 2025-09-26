@@ -2,4 +2,3 @@ aiogram
 httpx
 python-dotenv
 apscheduler
-aiohttp
