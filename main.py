@@ -112,7 +112,7 @@ def fetch_movie_details(movie_id: int | str):
         print(f"fetch_movie_details error: {e}")
         return {}
 
-def fetch_movie_cast(movie_id: int | str):
+def fetch_movie_credits(movie_id: int | str):
     try:
         resp = requests.get(
             f"{BASE_URL}/movie/{movie_id}/credits",
@@ -123,8 +123,19 @@ def fetch_movie_cast(movie_id: int | str):
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
-        print(f"fetch_movie_cast error: {e}")
+        print(f"fetch_movie_credits error: {e}")
         return {}
+
+def extract_director(credits: dict) -> str:
+    """Повертає ім'я режисера з credits.crew."""
+    crew = credits.get("crew", []) or []
+    # Пошук job == Director
+    for person in crew:
+        if (person.get("job") == "Director") or (
+            person.get("known_for_department") == "Directing" and person.get("job") in {"Director", "Co-Director"}
+        ):
+            return person.get("name") or "Невідомий режисер"
+    return "Невідомий режисер"
 
 def fetch_random_movie():
     """Ітеруємося по /movie/top_rated сторінково, щоб завжди було що надсилати."""
@@ -192,12 +203,13 @@ async def send_daily_movie(chat_id: int):
             return
 
         details = fetch_movie_details(movie["id"])
-        cast = fetch_movie_cast(movie["id"])
+        credits = fetch_movie_credits(movie["id"])
 
         genres = [g["name"] for g in details.get("genres", [])][:5]
         genres_str = ", ".join(genres) if genres else "Невідомий жанр"
 
-        actors = [a["name"] for a in cast.get("cast", [])][:4]
+        director = extract_director(credits)
+        actors = [a["name"] for a in (credits.get("cast") or [])][:4]
         actors_str = ", ".join(actors) if actors else "Інформація про акторів відсутня"
 
         caption = (
@@ -205,6 +217,7 @@ async def send_daily_movie(chat_id: int):
             f"**{movie.get('title', 'Без назви')}** ({movie.get('release_date', '?')[:4]})\n\n"
             f"⭐ Рейтинг: **{movie.get('vote_average', '?')}/10**\n\n"
             f"🎭 Жанр: **{genres_str}**\n\n"
+            f"🎬 Режисер: **{director}**\n\n"
             f"👥 Актори: **{actors_str}**\n\n"
             f"📝 {movie.get('overview', 'Опис відсутній')}"
         )
@@ -227,10 +240,17 @@ async def on_bot_added(message: types.Message):
         if chat_id not in active_chats:
             active_chats[chat_id] = True
             # Кожні 6 годин
-            scheduler.add_job(send_daily_movie, "interval", seconds=5, args=[chat_id])
+            scheduler.add_job(send_daily_movie, "interval", minutes=1, args=[chat_id])
             await message.answer("🤖 Я активний! Кожні 6 годин надсилатиму цікавий фільм.")
         else:
             await message.answer("🤖 Я вже працюю у цьому чаті!")
+
+@dp.message(Command("reset"))
+async def reset_ids(message: types.Message):
+    global sent_movie_ids
+    sent_movie_ids = []
+    save_sent_ids()
+    await message.answer("✅ Історію відправлених фільмів очищено.")
 
 @dp.message(Command("trending"))
 async def send_trending(message: types.Message):
@@ -284,15 +304,18 @@ async def movie_details_cmd(message: types.Message):
         return
 
     details = fetch_movie_details(movie_id)
-    cast = fetch_movie_cast(movie_id)
+    credits = fetch_movie_credits(movie_id)
     if not details:
         await message.answer("Не вдалося отримати інформацію про фільм.")
         return
 
-    actors = ", ".join(a.get("name", "?") for a in cast.get("cast", [])[:3])
+    director = extract_director(credits)
+    actors = ", ".join(a.get("name", "?") for a in (credits.get("cast") or [])[:3])
+
     response = (
         f"📽 {details.get('title','?')} ({details.get('release_date','?')[:4]})\n"
         f"⭐ Рейтинг: {details.get('vote_average','?')}/10\n"
+        f"🎬 Режисер: {director}\n"
         f"📝 {details.get('overview','Немає опису')[:200]}...\n"
         f"🎭 Актори: {actors or '—'}"
     )
