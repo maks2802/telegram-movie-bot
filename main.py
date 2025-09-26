@@ -237,10 +237,19 @@ async def send_daily_movie(chat_id: int):
         actors = [a["name"] for a in (credits.get("cast") or [])][:4]
         actors_str = ", ".join(actors) if actors else "Інформація про акторів відсутня"
 
+        runtime_min = details.get("runtime")
+        if runtime_min and isinstance(runtime_min, int):
+            hours = runtime_min // 60
+            minutes = runtime_min % 60
+            runtime_str = f"{hours} год. {minutes} хв." if hours > 0 else f"{minutes} хв."
+        else:
+            runtime_str = "Невідомо"
+        
         caption = (
             f"{greeting}\n\n"
             f"**{movie.get('title', 'Без назви')}** ({movie.get('release_date', '?')[:4]})\n\n"
-            f"⭐ Рейтинг: **{movie.get('vote_average', '?')}/10**\n\n"
+            f"⭐ Рейтинг: **{movie.get('vote_average', '?')}/10**\n"
+            f"🕒 Тривалість: **{runtime_str}**\n\n"
             f"🎭 Жанр: **{genres_str}**\n\n"
             f"🎬 Режисер: **{director}**\n\n"
             f"👥 Актори: **{actors_str}**\n\n"
@@ -264,7 +273,7 @@ async def on_bot_added(message: types.Message):
         chat_id = message.chat.id
         if chat_id not in active_chats:
             active_chats[chat_id] = True
-            scheduler.add_job(send_daily_movie, "interval", hours=6, args=[chat_id])
+            scheduler.add_job(send_daily_movie, "interval", minutes=1, args=[chat_id])
             await message.answer("🤖 Я активний! Кожні 6 годин надсилатиму цікавий фільм.")
         else:
             await message.answer("🤖 Я вже працюю у цьому чаті!")
